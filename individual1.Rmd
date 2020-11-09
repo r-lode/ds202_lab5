@@ -1,0 +1,241 @@
+---
+title: "Lab 5"
+author: "Ryan Lode"
+date: "11/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(dplyr)
+library(lubridate)
+library(readxl)
+library(tidyverse)
+library(lubridate)
+```
+
+```{r, warning = FALSE, message = FALSE}
+acc <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/accident.csv", stringsAsFactors = FALSE)
+
+person <- read.csv("https://raw.githubusercontent.com/xdaiISU/ds202materials/master/hwlabs/fars2017/person.csv")
+
+codeBook <- read_xlsx('./FRPP_GLC_-_United_StatesSep292020.xlsx')
+
+```
+
+**1.**Are there some days of the week where more accidents happen than the others (see FARS manual, use variable DAY_WEEK)?
+
+*Proces: * A dataframe, dailyFatalities was created from the acc dataframe. The days of the work were grouped and summarized. A barplot showing the number of fatalities by each day was then generated. 
+
+**Analysis: **Based on the graph, the number of driver fatalities increases throughout the week, reaching a high point on Saturday.
+```{r, warning = FALSE, message=FALSE}
+dailyFatalities <- acc %>%
+  group_by(DAY_WEEK) %>%
+  summarise(Total_Fatalities_by_Day = sum(DAY_WEEK))
+
+dailyFatalities$DAY_WEEK <- wday(dailyFatalities$DAY_WEEK, label = TRUE)
+
+ggplot(dailyFatalities, aes(x = DAY_WEEK, y= Total_Fatalities_by_Day)) + geom_bar(stat = "identity") +
+  ggtitle('Cumulative Driver Fatalities by Day of Week') + xlab('Day of Week') + ylab('Count')
+
+```
+
+**2.**Create a data frame containing the persons who are fatally hurt in the accidents (look up variable INJ_SEV)
+
+*Process: *A new dataframe, fatalities, was generated from the person dataframe and filtering where the injury severity code was fatal(at INJ_SEV = 4). NA values for the make where also dropped to aid in question 4. 
+
+
+```{r, warning= FALSE, message = FALSE}
+fatalities <-person %>%
+  filter(INJ_SEV == 4) %>%
+  filter(!is.na(MAKE))
+
+head(fatalities %>% select(1:5, 30), n = 5)
+
+```
+
+**3. **Create a data frame containing the most dangerous vehicle make in each state. The number of persons fatally hit in the vehicle make is used to assess the (non-)safety of a make. Make sure to handle the missing values appropriately. (look up variable MAKE)
+
+*Process: *A new dataframe, deadliest was created from the fatalities dataframe, grouping by state, and make, and then summarizing. The codebook dataframe was the processed to allow for joining. Then  deadliest was left joined to the CodeBookNames2 dataframe by STATE and StateCode. The state map data was then joined to the deadliest df(deadliestCoord) to allow for mapping. States that had 2 vehicles tie for the most fatalities had those car brands added to the same row/column location. 
+
+```{r, warning = FALSE, message = FALSE}
+deadliest <- fatalities %>%
+  group_by(STATE, MAKE) %>%
+  summarise(n = n()) %>%
+  group_by(STATE) %>%
+  filter(n == max(n))
+
+
+codeBook$`State Code` <- as.numeric(codeBook$`State Code`)
+codeBookNames <- codeBook %>%
+  select('State Name', 'State Code')
+codeBookNames$`State Code` <- as.numeric(codeBookNames$`State Code`)
+codeBookNames2 <- codeBookNames %>%
+  distinct()
+
+deadliest <- deadliest %>%
+  left_join(codeBookNames2, by = c('STATE' = 'State Code'))
+
+
+deadliest$`State Name`<- tolower(deadliest$`State Name`)
+
+states <- map_data('state')
+stateMeanCoord <- states %>% group_by(region) %>% summarize(long=mean(long), lat=mean(lat))
+
+deadliestCoord <- deadliest %>%
+  left_join(stateMeanCoord, by = c('State Name' = 'region'))
+
+carCodes <- read.csv('./makeCodes.csv')
+
+deadliestCoord <- deadliestCoord %>%
+  left_join(carCodes, by = c('MAKE' = 'Codes'))
+deadliestCoord <-deadliestCoord %>%
+  rename(Make_Code = MAKE)
+deadliestCoord[deadliestCoord$`State Name` == 'colorado', 'Make'] <- 'Ford/Honda'
+deadliestCoord[deadliestCoord$`State Name` == 'vermont', 'Make'] <- 'Chevrolet/Honda'
+deadliestCoord[deadliestCoord$`State Name` == 'new jersey','Make'] <- 'Ford/Honda'
+
+head(deadliest, n = 5)
+
+```
+
+**4. **Create a map, and label each state with the most dangerous vehicle. Discuss the definition of the most dangerous vehicle, and what you find from the map.
+
+**Analysis: **The most dangerous vehicle was defined to be the car brand in each state involved in the most cumulative fatalities. From the map, it is clearly evident that Ford and Chevrolet brand cars are involved in the majority of driver fatalities. Interestingly, there appear to be brand 'clusters' on the map. The southeast, for example has ford in contiguous states. 
+
+```{r, message= FALSE, warning = FALSE}
+ggplot(states, aes(x = long, y= lat)) + geom_path(aes(group = group)) + 
+  geom_text(data = deadliestCoord, aes(x = long, y = lat, label = Make)) + ggtitle('Deadliest Car by State')
+
+```
+
+**5. **Join the accident and person table (work out which variable(s) to use).
+
+*Process: * A new dataframe, AccidentPerson, was created by joining the acc and person dfs by the ST_CASE column. 
+
+```{r, message= FALSE, warning= FALSE}
+AccidentPerson <- acc %>%
+  left_join(person, by = "ST_CASE")
+
+head(AccidentPerson %>% select(1:5), n = 5)
+
+```
+
+
+**6. **Tally the number of accidents by day of the week (DAY_WEEK), hour of the day (HOUR) and gender (SEX). Visualize the results.
+
+*Process: * The AccidentPerson dataframe was first cleaned. The sex column was factorized, and the DAY_WEEK column was turned into a time object. The numerical time of day(HOUR.x), DAY_WEEK, and SEX columns were grouped by and summarized into a new df, AccidentByHour. AccidentByHour was then plotted, showing the a lineplot faceted by days of the week, witht the line representing the cumulative number of fatalities.
+
+**Analysis: **Regardless of gender, the line charts seem to show a common pattern. From Monday-Friday, the number of fatalities initially rises in the early morning and then falls, only to rise again higher later in the day. These results seem in line from what we would expect from people commuting. However, Saturday and Sunday both have very early morning fatality peaks, which is also not unexpected as some people will be partying late into  Friday and Saturday nights. 
+
+```{r, message=FALSE, warning=FALSE}
+AccidentPerson$SEX <- factor(AccidentPerson$SEX)
+AccidentPerson$DAY_WEEK <- wday(AccidentPerson$DAY_WEEK, label = TRUE)
+
+AccidentByHour <- AccidentPerson %>%
+  group_by(HOUR.x, DAY_WEEK, SEX) %>%
+  summarise(n = n())
+
+AccidentByHour$SEX <- factor(AccidentByHour$SEX)
+
+AccidentByHour %>% 
+  ggplot(aes(x = HOUR.x, y = n, color = SEX)) + 
+  geom_line() + facet_wrap(~DAY_WEEK) + xlim(0, 24) + scale_color_discrete(name = 'Sex', labels = c('Male','Female', 'Not Reported', 'Unknown'))+
+  ggtitle('Fatalities by Week Day, Hour, and Gender') + xlab('Time of Day') + ylab('Count')
+
+```
+
+**7: **Now plot a choropleth map of the number of deaths on a county level.
+
+*Process: *A counties dataframe was created using the county map data. Counties was then left joined to the codeBook dataframe by region and subregion. The fatalities dataframe was then grouped by state and county and summarized. This new df was then right joined to the counties dataframe and NA values were converted to 0. A county map plot was generated using geom_polygon. It was also overlayed with the state boundaries. This new plot shows the density of car fatalities at the county level. 
+
+**Analysis: **Unsuprisingly, the Los Angeles area seems to have the highest density of crashes. Elsewhere, darker regions are concentrated near major cities. 
+
+```{r, message = FALSE, warning = FALSE}
+counties <- map_data("county")
+
+codeBook$`State Name` <- tolower(codeBook$`State Name`)
+codeBook$`County Name`<- tolower(codeBook$`County Name`)
+counties <- counties %>%
+  left_join(codeBook, by = c('region' = 'State Name', 'subregion' = 'County Name'))
+counties$`County Code` <- as.numeric(counties$`County Code`)
+counties$`State Code` <- as.numeric(counties$`State Code`)
+
+
+fatalities <- fatalities %>%
+  group_by(STATE, COUNTY) %>%
+  summarize(n = n())
+fatalities <- fatalities %>%
+  right_join(counties, by = c('COUNTY' = 'County Code', 'STATE'= 'State Code'))
+fatalities$n[is.na(fatalities$n)] <- 0
+
+
+b <- c(0, 50, 100,150,200 ,250, 300,350)
+
+
+ggplot(fatalities, aes(x = long, y = lat, fill = n)) + 
+  geom_polygon(aes(group = group)) + 
+  geom_path(data = states, aes(x = long, y = lat, group = group), inherit.aes=FALSE, size= 0.5, color='black')+
+  scale_fill_gradient2(low="slategray", mid="slategray2", high="slategray4" , breaks = b) +
+  ggtitle('Driver Fatality Density by State') + coord_map()
+
+```
+
+
+**8. **Is summer or winter more dangerous? Does this depend on states? Explore and explain.
+
+*Process: ** Two dataframes, WinterFatalities and SummerFatalities were generated in the exact same manner as the original fatalities dataframe, except that each dataframe was filtered to only contain data from the winter and summer months, respectively. Each dataframe was then mapped to a chloropleth plot as in question 7. This was attempt to visualize county car fatality intensity by season. For example, one might expect northern Minnesota to have a higher density in the winter months, etc.
+
+**Analysis: ** Based on the chloropleth maps, it is difficult to see significant seasonal density differences by state. However, certain cities seem to have a lower density in the summer time than over winter. For example, the Miami area is noticeably lighter in the summer than in the winter. However, southern California is still noticeably more dangerous than the rest of the country, regardless of season. 
+
+```{r, warning= FALSE, message= FALSE}
+WinterFatalities <-person %>%
+  filter(INJ_SEV == 4) %>%
+  filter(!is.na(MAKE))
+
+SummerFatalities <-person %>%
+  filter(INJ_SEV == 4) %>%
+  filter(!is.na(MAKE))
+  
+
+WinterFatalities <- WinterFatalities %>%
+  filter(MONTH %in% c(1,2,3,12))
+
+SummerFatalities <-SummerFatalities %>%
+  filter(MONTH %in% c(6,7,8,9))
+
+WinterFatalities <- WinterFatalities %>%
+  group_by(STATE, COUNTY) %>%
+  summarize(n = n())
+
+SummerFatalities <-SummerFatalities %>%
+  group_by(STATE, COUNTY) %>%
+  summarize(n = n())
+
+WinterFatalities <- WinterFatalities %>%
+  right_join(counties, by = c('COUNTY' = 'County Code', 'STATE'= 'State Code'))
+
+SummerFatalities <- SummerFatalities %>%
+  right_join(counties, by = c('COUNTY' = 'County Code', 'STATE'= 'State Code'))
+
+WinterFatalities$n[is.na(WinterFatalities$n)] <- 0
+
+SummerFatalities$n[is.na(SummerFatalities$n)] <- 0
+
+b2 <- c(0, 15, 30, 45, 60, 75, 90, 105)
+  
+ggplot(WinterFatalities, aes(x = long, y = lat, fill = n)) + 
+  geom_polygon(aes(group = group)) + 
+  geom_path(data = states, aes(x = long, y = lat, group = group), inherit.aes=FALSE, size= 0.5, color='black')+
+  scale_fill_gradient2(low="slategray", mid = "slategray2" ,high="slategray4", breaks = b2) +ggtitle('Winter Fatalities Density Map') + coord_map()
+
+
+
+ggplot(SummerFatalities, aes(x = long, y = lat, fill = n)) + 
+  geom_polygon(aes(group = group)) + 
+  geom_path(data = states, aes(x = long, y = lat, group = group), inherit.aes=FALSE, size= 0.5, color='black')+
+  scale_fill_gradient2(low="slategray", mid = "slategray2" ,high="slategray4", breaks = b2) + ggtitle('Summer Fatalities Density Map') + coord_map()
+```
